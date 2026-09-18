@@ -1,0 +1,1571 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>兔子固定耳根 AR</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+}
+
+#stage {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+}
+
+/* 摄像头 */
+#camera {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+}
+
+/* P2 头部 */
+#head {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    height: auto;
+    transform-origin: center center;
+    pointer-events: none;
+    user-select: none;
+    z-index: 30;
+    display: none;
+}
+
+/* P1 / P3 耳朵 */
+.ear {
+    position: fixed;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    pointer-events: none;
+    user-select: none;
+    z-index: 20;
+    display: none;
+    will-change: left, top, transform;
+}
+
+/* 左耳固定点 */
+#leftEar {
+    transform-origin: 82% 18%;
+}
+
+/* 右耳固定点 */
+#rightEar {
+    transform-origin: 18% 18%;
+}
+
+/* 手部识别点 */
+.hand-dot {
+    position: fixed;
+    width: 24px;
+    height: 24px;
+    border: 3px solid white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 100;
+    display: none;
+}
+
+#leftHandDot {
+    background: #ff78aa;
+}
+
+#rightHandDot {
+    background: #71ddff;
+}
+
+.hand-dot.pinching {
+    width: 17px;
+    height: 17px;
+    background: #ffe45c;
+    box-shadow: 0 0 18px #ffe45c;
+}
+
+/* 状态 */
+#status {
+    position: fixed;
+    left: 50%;
+    bottom: 25px;
+    transform: translateX(-50%);
+    padding: 10px 18px;
+    border-radius: 100px;
+    background: rgba(0,0,0,0.68);
+    color: white;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    z-index: 200;
+}
+</style>
+</head>
+
+<body>
+
+<div id="stage">
+
+    <video
+        id="camera"
+        autoplay
+        playsinline>
+    </video>
+
+    <!-- P1 左耳 -->
+    <img
+        id="leftEar"
+        class="ear"
+        src="p1.png"
+    >
+
+    <!-- P3 右耳 -->
+    <img
+        id="rightEar"
+        class="ear"
+        src="p3.png"
+    >
+
+    <!-- P2 头 -->
+    <img
+        id="head"
+        src="p2.png"
+    >
+
+    <div
+        id="leftHandDot"
+        class="hand-dot">
+    </div>
+
+    <div
+        id="rightHandDot"
+        class="hand-dot">
+    </div>
+
+</div>
+
+<div id="status">
+    正在识别人脸……
+</div>
+
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+
+<script>
+
+/* =====================================================
+   元素
+===================================================== */
+
+const video =
+    document.getElementById("camera");
+
+const head =
+    document.getElementById("head");
+
+const leftEar =
+    document.getElementById("leftEar");
+
+const rightEar =
+    document.getElementById("rightEar");
+
+const leftHandDot =
+    document.getElementById("leftHandDot");
+
+const rightHandDot =
+    document.getElementById("rightHandDot");
+
+const status =
+    document.getElementById("status");
+
+
+/* =====================================================
+   头部状态
+===================================================== */
+
+let headX =
+    innerWidth / 2;
+
+let headY =
+    innerHeight / 2;
+
+let headSize =
+    700;
+
+let headAngle =
+    0;
+
+let faceVisible =
+    false;
+
+
+/* =====================================================
+   ★★★★★ 最终造型参数 ★★★★★
+===================================================== */
+
+
+/*
+   ★ 整体放大
+
+   上一版：4.55
+   现在：4.85
+
+   P1 + P2 + P3 会同步变大。
+*/
+const RABBIT_SCALE =
+    4.85;
+
+
+/*
+   耳朵相对于头部的尺寸
+*/
+const EAR_SIZE =
+    0.64;
+
+
+/*
+   ★ 耳朵向内收的位置
+
+   保留上一版已经调好的效果。
+*/
+const LEFT_ROOT_X =
+    -0.235;
+
+const RIGHT_ROOT_X =
+    0.235;
+
+
+/*
+   耳根上下基础位置
+*/
+const LEFT_ROOT_Y =
+    0.03;
+
+const RIGHT_ROOT_Y =
+    0.03;
+
+
+/*
+   耳朵整体向上
+   保持上一版。
+*/
+const EAR_DOWN =
+    -0.10;
+
+
+/*
+   ★★★★★ 新增 ★★★★★
+
+   整个兔子相对于真人脸
+   稍微向上移动。
+
+   数字越大：
+   越往上。
+
+   0.32 = 当前推荐值
+*/
+const RABBIT_UP =
+    0.32;
+
+
+/* =====================================================
+   固定耳根
+===================================================== */
+
+let leftRootX = 0;
+let leftRootY = 0;
+
+let rightRootX = 0;
+let rightRootY = 0;
+
+
+/* =====================================================
+   耳朵尺寸
+===================================================== */
+
+let earHeight =
+    300;
+
+
+/* =====================================================
+   耳朵旋转
+===================================================== */
+
+let leftRotation =
+    0;
+
+let rightRotation =
+    0;
+
+let leftRotationVelocity =
+    0;
+
+let rightRotationVelocity =
+    0;
+
+
+/* =====================================================
+   Q 弹拉伸
+===================================================== */
+
+let leftStretch =
+    1;
+
+let rightStretch =
+    1;
+
+let leftStretchVelocity =
+    0;
+
+let rightStretchVelocity =
+    0;
+
+
+/* =====================================================
+   抓取状态
+===================================================== */
+
+let grabbingLeft =
+    false;
+
+let grabbingRight =
+    false;
+
+
+/* =====================================================
+   手部位置
+===================================================== */
+
+let leftHandX = 0;
+let leftHandY = 0;
+
+let rightHandX = 0;
+let rightHandY = 0;
+
+let leftHandVisible =
+    false;
+
+let rightHandVisible =
+    false;
+
+
+/* =====================================================
+   距离计算
+===================================================== */
+
+function distance(x1, y1, x2, y2) {
+
+    const dx =
+        x1 - x2;
+
+    const dy =
+        y1 - y2;
+
+    return Math.sqrt(
+        dx * dx +
+        dy * dy
+    );
+}
+
+
+/* =====================================================
+   FACE MESH
+===================================================== */
+
+const faceMesh =
+    new FaceMesh({
+
+        locateFile: file =>
+
+            "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/"
+            + file
+
+    });
+
+
+faceMesh.setOptions({
+
+    maxNumFaces: 1,
+
+    refineLandmarks: true,
+
+    minDetectionConfidence: 0.6,
+
+    minTrackingConfidence: 0.6
+
+});
+
+
+faceMesh.onResults(results => {
+
+    if (
+        !results.multiFaceLandmarks ||
+        results.multiFaceLandmarks.length === 0
+    ) {
+
+        faceVisible =
+            false;
+
+        head.style.display =
+            "none";
+
+        leftEar.style.display =
+            "none";
+
+        rightEar.style.display =
+            "none";
+
+        return;
+    }
+
+
+    faceVisible =
+        true;
+
+
+    const face =
+        results.multiFaceLandmarks[0];
+
+
+    const leftFace =
+        face[234];
+
+    const rightFace =
+        face[454];
+
+    const forehead =
+        face[10];
+
+    const chin =
+        face[152];
+
+
+    /* =================================================
+       人脸中心
+    ================================================= */
+
+    const centerX =
+        (
+            leftFace.x +
+            rightFace.x
+        ) / 2;
+
+
+    const centerY =
+        (
+            forehead.y +
+            chin.y
+        ) / 2;
+
+
+    const targetX =
+        (1 - centerX)
+        * innerWidth;
+
+
+    /* =================================================
+       真人脸宽度
+    ================================================= */
+
+    const faceWidth =
+        Math.abs(
+            rightFace.x -
+            leftFace.x
+        )
+        * innerWidth;
+
+
+    /* =================================================
+       ★★★★★
+       整只兔子稍微向上
+
+       注意：
+
+       不是单独移动耳朵。
+       不是改变识别点。
+
+       是兔子图层整体相对于脸
+       向上补偿。
+    ================================================= */
+
+    const targetY =
+
+        centerY
+        * innerHeight
+
+        -
+
+        faceWidth
+        * RABBIT_UP;
+
+
+    /* =================================================
+       ★ 整体放大到 4.85
+    ================================================= */
+
+    const targetSize =
+        faceWidth
+        * RABBIT_SCALE;
+
+
+    /* =================================================
+       头部倾斜
+    ================================================= */
+
+    const dx =
+        rightFace.x -
+        leftFace.x;
+
+
+    const dy =
+        rightFace.y -
+        leftFace.y;
+
+
+    const targetAngle =
+
+        -Math.atan2(
+            dy,
+            dx
+        )
+
+        * 180
+        / Math.PI;
+
+
+    /* =================================================
+       平滑跟踪
+    ================================================= */
+
+    headX +=
+        (
+            targetX -
+            headX
+        )
+        * 0.35;
+
+
+    headY +=
+        (
+            targetY -
+            headY
+        )
+        * 0.35;
+
+
+    headSize +=
+        (
+            targetSize -
+            headSize
+        )
+        * 0.25;
+
+
+    headAngle +=
+        (
+            targetAngle -
+            headAngle
+        )
+        * 0.25;
+
+
+    /* =================================================
+       P2 兔子头
+    ================================================= */
+
+    head.style.display =
+        "block";
+
+
+    head.style.left =
+        headX + "px";
+
+
+    head.style.top =
+        headY + "px";
+
+
+    head.style.width =
+        headSize + "px";
+
+
+    head.style.transform =
+
+        "translate(-50%, -50%) "
+        +
+        "rotate("
+        +
+        headAngle
+        +
+        "deg) "
+        +
+        "scaleY(1.18)";
+
+
+    /* =================================================
+       P1 / P3 耳朵
+
+       跟随头部一起放大。
+    ================================================= */
+
+    earHeight =
+        headSize
+        * EAR_SIZE;
+
+
+    leftEar.style.height =
+        earHeight + "px";
+
+    leftEar.style.width =
+        "auto";
+
+
+    rightEar.style.height =
+        earHeight + "px";
+
+    rightEar.style.width =
+        "auto";
+
+
+    leftEar.style.display =
+        "block";
+
+    rightEar.style.display =
+        "block";
+
+
+    /* =================================================
+       左耳固定点
+
+       横向仍然是 -0.235
+       不再继续往里改。
+    ================================================= */
+
+    leftRootX =
+
+        headX
+
+        +
+
+        headSize
+        * LEFT_ROOT_X;
+
+
+    leftRootY =
+
+        headY
+
+        +
+
+        headSize
+        *
+        (
+            LEFT_ROOT_Y
+            +
+            EAR_DOWN
+        );
+
+
+    /* =================================================
+       右耳固定点
+
+       横向仍然是 +0.235
+    ================================================= */
+
+    rightRootX =
+
+        headX
+
+        +
+
+        headSize
+        * RIGHT_ROOT_X;
+
+
+    rightRootY =
+
+        headY
+
+        +
+
+        headSize
+        *
+        (
+            RIGHT_ROOT_Y
+            +
+            EAR_DOWN
+        );
+
+});
+
+
+/* =====================================================
+   HANDS
+===================================================== */
+
+const hands =
+    new Hands({
+
+        locateFile: file =>
+
+            "https://cdn.jsdelivr.net/npm/@mediapipe/hands/"
+            + file
+
+    });
+
+
+hands.setOptions({
+
+    maxNumHands: 2,
+
+    modelComplexity: 1,
+
+    minDetectionConfidence: 0.6,
+
+    minTrackingConfidence: 0.6
+
+});
+
+
+hands.onResults(results => {
+
+    leftHandVisible =
+        false;
+
+    rightHandVisible =
+        false;
+
+
+    leftHandDot.style.display =
+        "none";
+
+    rightHandDot.style.display =
+        "none";
+
+
+    if (!results.multiHandLandmarks) {
+
+        grabbingLeft =
+            false;
+
+        grabbingRight =
+            false;
+
+        return;
+    }
+
+
+    for (
+        let i = 0;
+        i < results.multiHandLandmarks.length;
+        i++
+    ) {
+
+        const hand =
+            results.multiHandLandmarks[i];
+
+
+        const handedness =
+            results.multiHandedness[i];
+
+
+        const thumb =
+            hand[4];
+
+        const index =
+            hand[8];
+
+
+        /* =================================================
+           捏合中心
+        ================================================= */
+
+        const pinchX =
+            (
+                thumb.x +
+                index.x
+            ) / 2;
+
+
+        const pinchY =
+            (
+                thumb.y +
+                index.y
+            ) / 2;
+
+
+        const screenX =
+            (1 - pinchX)
+            * innerWidth;
+
+
+        const screenY =
+            pinchY
+            * innerHeight;
+
+
+        /* =================================================
+           捏合距离
+        ================================================= */
+
+        const pinchDistance =
+
+            Math.sqrt(
+
+                Math.pow(
+                    thumb.x -
+                    index.x,
+                    2
+                )
+
+                +
+
+                Math.pow(
+                    thumb.y -
+                    index.y,
+                    2
+                )
+
+            );
+
+
+        const pinching =
+            pinchDistance < 0.055;
+
+
+        /* =================================================
+           左手 → P1 左耳
+        ================================================= */
+
+        if (
+            handedness.label === "Right"
+        ) {
+
+            leftHandVisible =
+                true;
+
+
+            leftHandX =
+                screenX;
+
+            leftHandY =
+                screenY;
+
+
+            leftHandDot.style.display =
+                "block";
+
+
+            leftHandDot.style.left =
+                screenX + "px";
+
+
+            leftHandDot.style.top =
+                screenY + "px";
+
+
+            if (pinching) {
+
+                leftHandDot
+                    .classList
+                    .add("pinching");
+
+            }
+
+            else {
+
+                leftHandDot
+                    .classList
+                    .remove("pinching");
+
+            }
+
+
+            /* =================================================
+               左耳抓取区域
+            ================================================= */
+
+            const grabX =
+                leftRootX
+                -
+                earHeight * 0.40;
+
+
+            const grabY =
+                leftRootY
+                +
+                earHeight * 0.35;
+
+
+            const d =
+                distance(
+                    screenX,
+                    screenY,
+                    grabX,
+                    grabY
+                );
+
+
+            if (
+                pinching
+                &&
+                (
+                    grabbingLeft
+                    ||
+                    d < earHeight * 0.55
+                )
+            ) {
+
+                grabbingLeft =
+                    true;
+
+            }
+
+
+            if (!pinching) {
+
+                grabbingLeft =
+                    false;
+
+            }
+
+        }
+
+
+        /* =================================================
+           右手 → P3 右耳
+        ================================================= */
+
+        else if (
+            handedness.label === "Left"
+        ) {
+
+            rightHandVisible =
+                true;
+
+
+            rightHandX =
+                screenX;
+
+            rightHandY =
+                screenY;
+
+
+            rightHandDot.style.display =
+                "block";
+
+
+            rightHandDot.style.left =
+                screenX + "px";
+
+
+            rightHandDot.style.top =
+                screenY + "px";
+
+
+            if (pinching) {
+
+                rightHandDot
+                    .classList
+                    .add("pinching");
+
+            }
+
+            else {
+
+                rightHandDot
+                    .classList
+                    .remove("pinching");
+
+            }
+
+
+            /* =================================================
+               右耳抓取区域
+            ================================================= */
+
+            const grabX =
+                rightRootX
+                +
+                earHeight * 0.40;
+
+
+            const grabY =
+                rightRootY
+                +
+                earHeight * 0.35;
+
+
+            const d =
+                distance(
+                    screenX,
+                    screenY,
+                    grabX,
+                    grabY
+                );
+
+
+            if (
+                pinching
+                &&
+                (
+                    grabbingRight
+                    ||
+                    d < earHeight * 0.55
+                )
+            ) {
+
+                grabbingRight =
+                    true;
+
+            }
+
+
+            if (!pinching) {
+
+                grabbingRight =
+                    false;
+
+            }
+
+        }
+
+    }
+
+
+    if (!leftHandVisible) {
+
+        grabbingLeft =
+            false;
+
+    }
+
+
+    if (!rightHandVisible) {
+
+        grabbingRight =
+            false;
+
+    }
+
+});
+
+
+/* =====================================================
+   Q 弹物理
+===================================================== */
+
+function animateEars() {
+
+
+    /* =================================================
+       左耳
+    ================================================= */
+
+    if (grabbingLeft) {
+
+        const dx =
+            leftHandX -
+            leftRootX;
+
+
+        const dy =
+            leftHandY -
+            leftRootY;
+
+
+        let targetRotation =
+
+            Math.atan2(
+                dy,
+                dx
+            )
+
+            * 180
+            / Math.PI;
+
+
+        targetRotation -=
+            135;
+
+
+        targetRotation =
+            Math.max(
+                -75,
+                Math.min(
+                    75,
+                    targetRotation
+                )
+            );
+
+
+        leftRotationVelocity +=
+
+            (
+                targetRotation -
+                leftRotation
+            )
+
+            * 0.18;
+
+
+        leftRotationVelocity *=
+            0.72;
+
+
+        /* 轻微拉伸 */
+
+        const pullDistance =
+            Math.sqrt(
+                dx * dx +
+                dy * dy
+            );
+
+
+        const targetStretch =
+
+            1
+
+            +
+
+            Math.min(
+                0.12,
+                pullDistance / 2500
+            );
+
+
+        leftStretchVelocity +=
+
+            (
+                targetStretch -
+                leftStretch
+            )
+
+            * 0.15;
+
+
+        leftStretchVelocity *=
+            0.72;
+
+    }
+
+    else {
+
+        /*
+           松手后 Q 弹回原位
+        */
+
+        leftRotationVelocity +=
+
+            (
+                0 -
+                leftRotation
+            )
+
+            * 0.075;
+
+
+        leftRotationVelocity *=
+            0.86;
+
+
+        leftStretchVelocity +=
+
+            (
+                1 -
+                leftStretch
+            )
+
+            * 0.10;
+
+
+        leftStretchVelocity *=
+            0.82;
+
+    }
+
+
+    leftRotation +=
+        leftRotationVelocity;
+
+
+    leftStretch +=
+        leftStretchVelocity;
+
+
+    /* =================================================
+       右耳
+    ================================================= */
+
+    if (grabbingRight) {
+
+        const dx =
+            rightHandX -
+            rightRootX;
+
+
+        const dy =
+            rightHandY -
+            rightRootY;
+
+
+        let targetRotation =
+
+            Math.atan2(
+                dy,
+                dx
+            )
+
+            * 180
+            / Math.PI;
+
+
+        targetRotation -=
+            45;
+
+
+        targetRotation =
+            Math.max(
+                -75,
+                Math.min(
+                    75,
+                    targetRotation
+                )
+            );
+
+
+        rightRotationVelocity +=
+
+            (
+                targetRotation -
+                rightRotation
+            )
+
+            * 0.18;
+
+
+        rightRotationVelocity *=
+            0.72;
+
+
+        const pullDistance =
+            Math.sqrt(
+                dx * dx +
+                dy * dy
+            );
+
+
+        const targetStretch =
+
+            1
+
+            +
+
+            Math.min(
+                0.12,
+                pullDistance / 2500
+            );
+
+
+        rightStretchVelocity +=
+
+            (
+                targetStretch -
+                rightStretch
+            )
+
+            * 0.15;
+
+
+        rightStretchVelocity *=
+            0.72;
+
+    }
+
+    else {
+
+        rightRotationVelocity +=
+
+            (
+                0 -
+                rightRotation
+            )
+
+            * 0.075;
+
+
+        rightRotationVelocity *=
+            0.86;
+
+
+        rightStretchVelocity +=
+
+            (
+                1 -
+                rightStretch
+            )
+
+            * 0.10;
+
+
+        rightStretchVelocity *=
+            0.82;
+
+    }
+
+
+    rightRotation +=
+        rightRotationVelocity;
+
+
+    rightStretch +=
+        rightStretchVelocity;
+
+
+    /* =================================================
+       左耳固定连接
+    ================================================= */
+
+    const leftW =
+        leftEar.offsetWidth;
+
+
+    const leftH =
+        leftEar.offsetHeight;
+
+
+    leftEar.style.left =
+
+        (
+            leftRootX
+            -
+            leftW * 0.82
+        )
+
+        + "px";
+
+
+    leftEar.style.top =
+
+        (
+            leftRootY
+            -
+            leftH * 0.18
+        )
+
+        + "px";
+
+
+    leftEar.style.transform =
+
+        "rotate("
+        +
+        (
+            headAngle
+            +
+            leftRotation
+        )
+        +
+        "deg) "
+        +
+        "scaleY("
+        +
+        leftStretch
+        +
+        ")";
+
+
+    /* =================================================
+       右耳固定连接
+    ================================================= */
+
+    const rightW =
+        rightEar.offsetWidth;
+
+
+    const rightH =
+        rightEar.offsetHeight;
+
+
+    rightEar.style.left =
+
+        (
+            rightRootX
+            -
+            rightW * 0.18
+        )
+
+        + "px";
+
+
+    rightEar.style.top =
+
+        (
+            rightRootY
+            -
+            rightH * 0.18
+        )
+
+        + "px";
+
+
+    rightEar.style.transform =
+
+        "rotate("
+        +
+        (
+            headAngle
+            +
+            rightRotation
+        )
+        +
+        "deg) "
+        +
+        "scaleY("
+        +
+        rightStretch
+        +
+        ")";
+
+
+    requestAnimationFrame(
+        animateEars
+    );
+
+}
+
+
+animateEars();
+
+
+/* =====================================================
+   摄像头
+===================================================== */
+
+let processing =
+    false;
+
+
+const camera =
+    new Camera(
+
+        video,
+
+        {
+
+            onFrame: async () => {
+
+                if (processing) {
+                    return;
+                }
+
+
+                processing =
+                    true;
+
+
+                try {
+
+                    await faceMesh.send({
+                        image: video
+                    });
+
+
+                    await hands.send({
+                        image: video
+                    });
+
+                }
+
+                catch (error) {
+
+                    console.error(error);
+
+                }
+
+
+                processing =
+                    false;
+
+            },
+
+
+            width:
+                1280,
+
+            height:
+                720
+
+        }
+
+    );
+
+
+camera.start();
+
+
+/* =====================================================
+   状态文字
+===================================================== */
+
+setInterval(() => {
+
+    if (!faceVisible) {
+
+        status.innerText =
+            "👤 把脸放进摄像头";
+
+    }
+
+    else if (
+        grabbingLeft &&
+        grabbingRight
+    ) {
+
+        status.innerText =
+            "🐰 两只耳朵都抓住了";
+
+    }
+
+    else if (grabbingLeft) {
+
+        status.innerText =
+            "🤏 左耳被提起来了";
+
+    }
+
+    else if (grabbingRight) {
+
+        status.innerText =
+            "🤏 右耳被提起来了";
+
+    }
+
+    else {
+
+        status.innerText =
+            "🤏 捏住耳朵下半部分向上提";
+
+    }
+
+}, 100);
+
+</script>
+
+</body>
+</html>
